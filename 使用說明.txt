@@ -1,0 +1,154 @@
+﻿NPT Parsing 使用說明
+================================
+
+這支工具會把 NPT 量測 CSV 自動填進 data analysis.xlsx 的 LTE 表。
+5G 表不會改。Excel 只用來看結果，不必會寫程式。
+
+程式本體與範例檔都放在 app\ 資料夾，平常不需要進去。
+
+
+一、新電腦第一次安裝（只需一次）
+--------------------------------
+這台電腦可以沒有 Python。
+
+1. 把整個「NTP toolfor nick」資料夾拷到新電腦（例如 D:\NTP toolfor nick）
+2. 雙擊 setup.bat，等它跑完（約 1～5 分鐘，需要網路）
+3. 看到「環境建置完成」就可以關閉視窗
+
+之後日常只要用 NPT Parsing.bat，不必再跑 setup.bat。
+若提示套件錯誤，再重跑一次 setup.bat。
+
+
+二、平常怎麼用
+--------------------------------
+1. 準備 CSV
+   放到：NPT result\專案名稱\
+   例：NPT result\L6003\IMEI-xxxx_LTE_Band1_10MHz_2026-08-10_20_29_18.csv
+   ※ 檔案必須在專案資料夾「第一層」，不要再往下開子資料夾
+
+2. 關閉 data analysis.xlsx
+   ※ 檔案開著會寫不進去
+
+3. 雙擊 NPT Parsing.bat
+   - 新的專案名稱 → 在 LTE 表加一組 Main / Aux 欄
+   - 已經有同名 → 只更新數字，不會再加一欄
+
+4. 打開 data analysis.xlsx，到 LTE sheet 查看
+
+
+三、data analysis.xlsx 不見了怎麼辦
+--------------------------------
+不用擔心，直接雙擊 NPT Parsing.bat 即可。
+
+程式發現根目錄沒有 data analysis.xlsx 時，
+會自動從 app\data analysis_temp.xlsx（空白範本）複製一份新的，再填資料。
+
+注意：
+- 已經存在的 data analysis.xlsx 永遠不會被範本蓋掉
+- 想改預設表格（Band、Spec、頻寬），請改 app\data analysis_temp.xlsx
+- 想從零開始，就把根目錄的 data analysis.xlsx 刪掉，再跑一次
+
+
+四、欄位排列規則
+--------------------------------
+- 空白範本第一筆專案 → 寫在 F / G 欄
+- 之後每多一個專案 → 往右加一組（H/I、J/K …）
+- 判斷「這組已被使用」的依據是第 9 列有沒有專案名稱
+- 第 9 列已經手動填名字的欄（例如 ATC 比較基準）不會被當成空欄搶用
+  同名時才會更新該欄數字
+
+
+五、什麼時候用 rebuild
+--------------------------------
+雙擊 NPT Parsing_rebuild.bat
+
+會清空 LTE 表上「所有已命名的專案欄」（名稱與數值都清掉），
+再依 NPT result 裡現有的專案資料夾，從 F/G 開始重新排列填入。
+
+適合：專案資料夾改名、刪掉舊專案、或欄位順序亂掉時。
+不適合：只想更新某個專案數字（那時用 NPT Parsing.bat 即可）。
+注意：手動填在表上的專案欄也會被一起清掉。
+
+
+六、CSV 檔名要長這樣
+--------------------------------
+  IMEI-xxxxxxxx_LTE_Band1_10MHz_2026-08-10_20_29_18.csv
+                         ^^^^^^  ^^^^^^
+                         Band     頻寬
+
+規則：
+- 必須看得到 Band數字_數字MHz（例如 Band1_10MHz、Band41_20MHz）
+- 頻寬必須跟 Excel LTE 表該列的 Bandwidth 相同，不同就當缺檔、該格留空
+- 同一個 Band、同一個頻寬有多份 → 用檔名時間較新的那份
+
+
+七、表上會填什麼
+--------------------------------
+- 每一個專案：一組 Main（Rx0）+ Aux（Rx1）
+- 每一個 LTE Band：該 Band 全部頻率的 RxAGC_Value 最大值（小數 1 位）
+- 第 9 列寫專案資料夾名稱（例如 L6003）
+- UMTS / GPS 的打勾不會自動填
+- 右下「本次新增資料」區塊不會動
+- 5G sheet 不會動
+
+Band 列的排序由 Excel 決定。你在表上調整 Band 順序，
+程式仍會依「該列寫的是哪個 Band」填對位置，不會自己重排。
+
+
+八、顏色（對照 E 欄 NPT spec.）
+--------------------------------
+  黑字  通過      數值 ≤ spec
+  橘字  接近規格  數值 ≤ spec + 2
+  紅字  失敗      數值 > spec + 2
+  空格  沒有量到  缺 CSV 或頻寬不對（視窗會列出缺檔 Band）
+
+
+九、資料夾裡有哪些檔
+--------------------------------
+根目錄（平常只需要用到這些）
+  setup.bat                 新電腦、第一次使用：安裝環境
+  NPT Parsing.bat           平常匯入
+  NPT Parsing_rebuild.bat   全量重排
+  data analysis.xlsx        結果比較表（程式會寫入 LTE）
+  NPT result\               放各專案 CSV
+  使用說明.txt              本說明
+  README.md                 精簡 SOP
+
+app\（程式與範例，平常不用動）
+  NPT Parsing.py            主程式
+  setup.ps1                 環境建置腳本
+  requirements.txt          套件清單
+  data analysis_temp.xlsx   空白範本（結果檔不見時用它重建）
+  venv\ 或 runtime\         setup.bat 自動產生，不要手動改
+
+
+十、常見問題
+--------------------------------
+Q: 提示找不到執行環境
+A: 先雙擊 setup.bat。
+
+Q: setup.bat 失敗、下載 Python 失敗
+A: 需要能連網。或先安裝 Python 3（https://www.python.org/downloads/），
+   安裝時勾選 Add python.exe to PATH，再重跑 setup.bat。
+
+Q: 無法寫入 data analysis.xlsx
+A: 先關閉 Excel。
+
+Q: 跳過（無符合 CSV）
+A: CSV 要在專案資料夾第一層，檔名要有 BandX_YYMHz。
+
+Q: 某個 Band 是空的
+A: 沒有對應頻寬的 CSV。視窗訊息會列出缺檔 Band。
+
+Q: 想整台重裝環境
+A: 刪除 app\venv 與 app\runtime 資料夾，再雙擊 setup.bat。
+
+
+十一、拷到另一台電腦
+--------------------------------
+把整個資料夾一起拷貝即可。
+
+- 若連 app\venv 或 app\runtime 也拷過去：新電腦通常可直接雙擊 NPT Parsing.bat
+- 若沒拷到、或新電腦打不開：再雙擊一次 setup.bat
+- 只想帶乾淨的工具：只拷根目錄的 bat、使用說明與 app\（不含 venv），
+  以及 NPT result\ 空資料夾；data analysis.xlsx 會自動從範本產生

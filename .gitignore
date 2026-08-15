@@ -1,0 +1,16 @@
+# 執行環境（由 setup.bat 產生）
+app/venv/
+app/runtime/
+
+# Python 快取
+__pycache__/
+*.py[cod]
+
+# 結果檔與量測資料
+data analysis.xlsx
+data analysis3.xlsx
+NPT result/*
+!NPT result/.gitkeep
+
+# Excel 暫存
+~$*.xlsx
