@@ -1,8 +1,8 @@
 ﻿NPT Parsing 使用說明
 ================================
 
-這支工具會把 NPT 量測 CSV 自動填進 data analysis.xlsx 的 LTE 表。
-5G 表不會改。Excel 只用來看結果，不必會寫程式。
+這支工具會把 NPT 量測 CSV 自動填進 data analysis.xlsx 的三張 4G 表：
+LTE MAX、LTE AVG、LTE Mid AVG。5G 表不會改。Excel 只用來看結果，不必會寫程式。
 
 程式本體與範例檔都放在 app\ 資料夾，平常不需要進去。
 
@@ -30,10 +30,11 @@
    ※ 檔案開著會寫不進去
 
 3. 雙擊 NPT Parsing.bat
-   - 新的專案名稱 → 在 LTE 表加一組 Main / Aux 欄
+   - 新的專案名稱 → 三張 4G 表同時加一組 Main / Aux 欄
    - 已經有同名 → 只更新數字，不會再加一欄
+   - 舊檔若還叫 LTE，會自動改名成 LTE MAX，並補上兩張平均表
 
-4. 打開 data analysis.xlsx，到 LTE sheet 查看
+4. 打開 data analysis.xlsx，查看 LTE MAX / LTE AVG / LTE Mid AVG
 
 
 三、data analysis.xlsx 不見了怎麼辦
@@ -46,6 +47,8 @@
 注意：
 - 已經存在的 data analysis.xlsx 永遠不會被範本蓋掉
 - 想改預設表格（Band、Spec、頻寬），請改 app\data analysis_temp.xlsx
+  的三張 4G 表（版面需相同）；或只改 LTE MAX，刪掉兩張平均表後再跑一次
+  （程式會從 LTE MAX 自動複製）
 - 想從零開始，就把根目錄的 data analysis.xlsx 刪掉，再跑一次
 
 
@@ -62,7 +65,7 @@
 --------------------------------
 雙擊 NPT Parsing_rebuild.bat
 
-會清空 LTE 表上「所有已命名的專案欄」（名稱與數值都清掉），
+會清空三張 4G 表上「所有已命名的專案欄」（名稱與數值都清掉），
 再依 NPT result 裡現有的專案資料夾，從 F/G 開始重新排列填入。
 
 適合：專案資料夾改名、刪掉舊專案、或欄位順序亂掉時。
@@ -78,18 +81,25 @@
 
 規則：
 - 必須看得到 Band數字_數字MHz（例如 Band1_10MHz、Band41_20MHz）
-- 頻寬必須跟 Excel LTE 表該列的 Bandwidth 相同，不同就當缺檔、該格留空
+- 頻寬必須跟 Excel 4G 表該列的 Bandwidth 相同，不同就當缺檔、該格留空
 - 同一個 Band、同一個頻寬有多份 → 用檔名時間較新的那份
 
 
 七、表上會填什麼
 --------------------------------
-- 每一個專案：一組 Main（Rx0）+ Aux（Rx1）
-- 每一個 LTE Band：該 Band 全部頻率的 RxAGC_Value 最大值（小數 1 位）
+一次執行會同時寫三張 4G 表（專案欄位置相同）：
+- LTE MAX：該 Band 全部頻率的 RxAGC_Value 最大值
+- LTE AVG：該 Band 全部頻率的 RxAGC_Value 平均
+- LTE Mid AVG：掃頻頻率中點 ± Bandwidth/2 視窗內的 RxAGC_Value 平均
+  （頻率欄自動找 Freq / Frequency 等；找不到或視窗沒點就留空）
+
+其他規則：
+- 每一個專案：一組 Main（Rx0）+ Aux（Rx1），小數 1 位
 - 第 9 列寫專案資料夾名稱（例如 L6003）
 - UMTS / GPS 的打勾不會自動填
-- 右下「本次新增資料」區塊不會動
+- 右下「本次新增資料」只留在 LTE MAX，平均表不會抄過去
 - 5G sheet 不會動
+- 分頁順序：LTE MAX → LTE AVG → LTE Mid AVG → 5G
 
 Band 列的排序由 Excel 決定。你在表上調整 Band 順序，
 程式仍會依「該列寫的是哪個 Band」填對位置，不會自己重排。
@@ -100,7 +110,7 @@ Band 列的排序由 Excel 決定。你在表上調整 Band 順序，
   黑字  通過      數值 ≤ spec
   橘字  接近規格  數值 ≤ spec + 2
   紅字  失敗      數值 > spec + 2
-  空格  沒有量到  缺 CSV 或頻寬不對（視窗會列出缺檔 Band）
+  空格  沒有量到  缺 CSV、頻寬不對，或 Mid 視窗沒有資料
 
 
 九、資料夾裡有哪些檔
@@ -109,7 +119,7 @@ Band 列的排序由 Excel 決定。你在表上調整 Band 順序，
   setup.bat                 新電腦、第一次使用：安裝環境
   NPT Parsing.bat           平常匯入
   NPT Parsing_rebuild.bat   全量重排
-  data analysis.xlsx        結果比較表（程式會寫入 LTE）
+  data analysis.xlsx        結果比較表（程式會寫入三張 4G 表）
   NPT result\               放各專案 CSV
   使用說明.txt              本說明
   README.md                 精簡 SOP
@@ -139,6 +149,10 @@ A: CSV 要在專案資料夾第一層，檔名要有 BandX_YYMHz。
 
 Q: 某個 Band 是空的
 A: 沒有對應頻寬的 CSV。視窗訊息會列出缺檔 Band。
+   Mid 表若只有部分 Band 空白，可能是中頻視窗沒掃到點。
+
+Q: 舊的結果檔還是 LTE 分頁
+A: 再跑一次 NPT Parsing.bat，會自動改名成 LTE MAX，並補上兩張平均表。
 
 Q: 想整台重裝環境
 A: 刪除 app\venv 與 app\runtime 資料夾，再雙擊 setup.bat。

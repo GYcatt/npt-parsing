@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""將 NPT result/<Project>/ CSV 的全頻段 Max 填入 data analysis.xlsx（LTE sheet）。"""
+"""將 NPT result/<Project>/ CSV 填入 data analysis.xlsx（LTE MAX / AVG / Mid AVG）。"""
 
 from __future__ import annotations
 
@@ -22,7 +22,22 @@ NPT_DIR = ROOT / "NPT result"
 WORKBOOK = ROOT / "data analysis.xlsx"
 TEMPLATE = APP_DIR / "data analysis_temp.xlsx"
 
-LTE_SHEET = "LTE"
+SHEET_MAX = "LTE MAX"
+SHEET_AVG = "LTE AVG"
+SHEET_MID = "LTE Mid AVG"
+SHEET_LEGACY = "LTE"
+SHEET_5G = "5G"
+LTE_SHEETS = (SHEET_MAX, SHEET_AVG, SHEET_MID)
+
+STAT_MAX = "max"
+STAT_AVG = "avg"
+STAT_MID = "mid_avg"
+SHEET_STAT = {
+    SHEET_MAX: STAT_MAX,
+    SHEET_AVG: STAT_AVG,
+    SHEET_MID: STAT_MID,
+}
+
 PROJECT_NAME_ROW = 9
 PHOTO_ROW = 8
 DATA_FIRST_ROW = 10
@@ -41,6 +56,16 @@ FONT_WARN = "FFC000"
 FONT_FAIL = "FF0000"
 FILL_EMPTY = PatternFill()
 
+FREQ_COLUMNS = (
+    "Frequency",
+    "Freq",
+    "RxFrequency",
+    "RxFreq",
+    "DL_Frequency",
+    "DlFrequency",
+    "DLFreq",
+)
+
 
 def parse_csv_name(path: Path) -> tuple[int, int] | None:
     match = CSV_PATTERN.search(path.name)
@@ -49,14 +74,62 @@ def parse_csv_name(path: Path) -> tuple[int, int] | None:
     return int(match.group(1)), int(match.group(2))
 
 
-def load_rx_max(csv_path: Path, rx_id: int) -> float | None:
-    df = pd.read_csv(csv_path)
+def find_freq_column(df: pd.DataFrame) -> str | None:
+    lower = {str(col).strip().lower(): col for col in df.columns}
+    for name in FREQ_COLUMNS:
+        found = lower.get(name.lower())
+        if found is not None:
+            return str(found)
+    return None
+
+
+def load_rx_stat(
+    csv_path: Path,
+    rx_id: int,
+    stat: str,
+    bw_mhz: int | None,
+    cache: dict,
+) -> float | None:
+    """cache keys: ('df', path), ('freq', path), (path, rx_id, stat, bw)."""
+    df_key = ("df", csv_path)
+    if df_key not in cache:
+        cache[df_key] = pd.read_csv(csv_path)
+    df = cache[df_key]
     if df.empty or "RxId" not in df.columns or "RxAGC_Value" not in df.columns:
         return None
+
+    key = (csv_path, rx_id, stat, bw_mhz)
+    if key in cache:
+        return cache[key]
+
     subset = df[df["RxId"] == rx_id]["RxAGC_Value"].dropna()
-    if subset.empty:
-        return None
-    return round(float(subset.max()), 1)
+    value: float | None = None
+    if stat == STAT_MAX:
+        if not subset.empty:
+            value = round(float(subset.max()), 1)
+    elif stat == STAT_AVG:
+        if not subset.empty:
+            value = round(float(subset.mean()), 1)
+    elif stat == STAT_MID:
+        freq_key = ("freq", csv_path)
+        if freq_key not in cache:
+            cache[freq_key] = find_freq_column(df)
+        freq_col = cache[freq_key]
+        if freq_col is not None and bw_mhz is not None and bw_mhz > 0 and freq_col in df.columns:
+            freqs = df[freq_col].dropna()
+            if not freqs.empty:
+                mid = (float(freqs.min()) + float(freqs.max())) / 2.0
+                half = bw_mhz / 2.0
+                window = df[
+                    (df["RxId"] == rx_id)
+                    & (df[freq_col] >= mid - half)
+                    & (df[freq_col] <= mid + half)
+                ]["RxAGC_Value"].dropna()
+                if not window.empty:
+                    value = round(float(window.mean()), 1)
+
+    cache[key] = value
+    return value
 
 
 def status_font_color(value: float | None, spec: float | None) -> str:
@@ -235,9 +308,11 @@ def write_project_values(
     start_col: int,
     csv_map: dict[tuple[int, int], Path],
     lte_rows: dict[int, tuple[int, int | None, float | None]],
-) -> list[int]:
+    stat: str,
+    cache: dict,
+) -> tuple[list[int], list[int]]:
     missing: list[int] = []
-    cache: dict[tuple[Path, int], float | None] = {}
+    mid_empty: list[int] = []
 
     for band, (row, bw, spec) in sorted(lte_rows.items()):
         csv_path = csv_map.get((band, bw)) if bw is not None else None
@@ -245,12 +320,10 @@ def write_project_values(
         if csv_path is None:
             missing.append(band)
         else:
-            for rx_id in (RX_MAIN, RX_AUX):
-                key = (csv_path, rx_id)
-                if key not in cache:
-                    cache[key] = load_rx_max(csv_path, rx_id)
-            main_val = cache[(csv_path, RX_MAIN)]
-            aux_val = cache[(csv_path, RX_AUX)]
+            main_val = load_rx_stat(csv_path, RX_MAIN, stat, bw, cache)
+            aux_val = load_rx_stat(csv_path, RX_AUX, stat, bw, cache)
+            if stat == STAT_MID and main_val is None and aux_val is None:
+                mid_empty.append(band)
 
         main_cell = ws.cell(row, start_col)
         aux_cell = ws.cell(row, start_col + 1)
@@ -259,15 +332,14 @@ def write_project_values(
         apply_value_style(main_cell, main_val, spec)
         apply_value_style(aux_cell, aux_val, spec)
 
-    return missing
+    return missing, mid_empty
 
 
-def reset_project_columns(ws: Worksheet, lte_rows: dict) -> int:
-    """清空所有已命名的 Project 欄（保留表頭格式），回傳清除組數。"""
+def clear_project_values(ws: Worksheet, lte_rows: dict) -> None:
+    """清空專案數字，保留第 9 列名稱與表頭格式。"""
     pairs = [col for _name, col in iter_project_pairs(ws)]
     end_row = last_data_row(lte_rows)
     for start_col in pairs:
-        ws.cell(PROJECT_NAME_ROW, start_col).value = None
         for offset in range(PAIR_WIDTH):
             for row in range(DATA_FIRST_ROW, end_row + 1):
                 cell = ws.cell(row, start_col + offset)
@@ -275,7 +347,70 @@ def reset_project_columns(ws: Worksheet, lte_rows: dict) -> int:
                 font = copy(cell.font)
                 font.color = FONT_PASS
                 cell.font = font
+
+
+def reset_project_columns(ws: Worksheet, lte_rows: dict) -> int:
+    """清空所有已命名的 Project 欄（保留表頭格式），回傳清除組數。"""
+    pairs = [col for _name, col in iter_project_pairs(ws)]
+    clear_project_values(ws, lte_rows)
+    for start_col in pairs:
+        ws.cell(PROJECT_NAME_ROW, start_col).value = None
     return len(pairs)
+
+
+def strip_draft(ws: Worksheet, lte_rows: dict) -> None:
+    """刪除主表 Band 列以下的「本次新增資料」區塊。"""
+    end = last_data_row(lte_rows)
+    if ws.max_row <= end:
+        return
+    to_remove = [
+        str(merged)
+        for merged in ws.merged_cells.ranges
+        if merged.min_row > end
+    ]
+    for ref in to_remove:
+        ws.unmerge_cells(ref)
+    ws.delete_rows(end + 1, ws.max_row - end)
+
+
+def order_sheets(wb) -> None:
+    wanted = [SHEET_MAX, SHEET_AVG, SHEET_MID, SHEET_5G]
+    existing = [name for name in wanted if name in wb.sheetnames]
+    rest = [name for name in wb.sheetnames if name not in existing]
+    wb._sheets = [wb[name] for name in existing + rest]
+
+
+def clone_avg_sheet(wb, src_name: str, dst_name: str, lte_rows: dict) -> None:
+    dst = wb.copy_worksheet(wb[src_name])
+    dst.title = dst_name
+    strip_draft(dst, lte_rows)
+    clear_project_values(dst, lte_rows)
+
+
+def prepare_lte_sheets(wb) -> list[str]:
+    """舊 LTE 改名、補平均表、調整分頁順序。回傳訊息。"""
+    notes: list[str] = []
+    names = set(wb.sheetnames)
+
+    if SHEET_LEGACY in names and SHEET_MAX not in names:
+        wb[SHEET_LEGACY].title = SHEET_MAX
+        notes.append(f"已將「{SHEET_LEGACY}」改名為「{SHEET_MAX}」")
+        names = set(wb.sheetnames)
+    elif SHEET_LEGACY in names and SHEET_MAX in names:
+        notes.append(f"同時存在「{SHEET_LEGACY}」與「{SHEET_MAX}」，以「{SHEET_MAX}」為準")
+
+    if SHEET_MAX not in wb.sheetnames:
+        return notes
+
+    lte_rows = read_lte_rows(wb[SHEET_MAX])
+    for sheet_name in (SHEET_AVG, SHEET_MID):
+        if sheet_name in wb.sheetnames:
+            continue
+        clone_avg_sheet(wb, SHEET_MAX, sheet_name, lte_rows)
+        notes.append(f"已新增「{sheet_name}」（自 {SHEET_MAX} 複製版面）")
+
+    order_sheets(wb)
+    return notes
 
 
 def ensure_workbook() -> bool:
@@ -298,20 +433,27 @@ def process_projects(rebuild: bool = False) -> int:
         return 1
 
     wb = load_workbook(WORKBOOK)
-    if LTE_SHEET not in wb.sheetnames:
-        print(f"找不到 {LTE_SHEET} sheet")
+    for line in prepare_lte_sheets(wb):
+        print(line)
+
+    if SHEET_MAX not in wb.sheetnames:
+        print(f"找不到 {SHEET_MAX} sheet")
         return 1
-    ws = wb[LTE_SHEET]
-    lte_rows = read_lte_rows(ws)
+
+    sheets = {name: wb[name] for name in LTE_SHEETS if name in wb.sheetnames}
+    ws_max = sheets[SHEET_MAX]
+    lte_rows = read_lte_rows(ws_max)
     if not lte_rows:
-        print("LTE sheet 找不到 Band 列。")
+        print(f"{SHEET_MAX} 找不到 Band 列。")
         return 1
 
     if rebuild:
-        removed = reset_project_columns(ws, lte_rows)
+        removed = 0
+        for ws in sheets.values():
+            removed = reset_project_columns(ws, lte_rows)
         print(f"強制重算：已清空 {removed} 組 Project 欄，依 CSV 全量重寫…")
 
-    existing = {name: col for name, col in iter_project_pairs(ws)}
+    existing = {name: col for name, col in iter_project_pairs(ws_max)}
     project_dirs = sorted(p for p in NPT_DIR.iterdir() if p.is_dir())
     if not project_dirs:
         print("NPT result/ 內沒有 Project 資料夾。")
@@ -324,6 +466,7 @@ def process_projects(rebuild: bool = False) -> int:
 
     added = 0
     updated = 0
+    freq_warned = False
     for project_dir in project_dirs:
         name = project_dir.name
         csv_map = pick_csv_files(project_dir)
@@ -331,21 +474,50 @@ def process_projects(rebuild: bool = False) -> int:
             print(f"跳過（無符合 CSV）：{name}")
             continue
 
+        cache: dict = {}
         start_col = existing.get(name)
         if start_col is None:
-            start_col = next_pair_col(ws)
-            setup_project_pair(ws, start_col, name, lte_rows)
-            missing = write_project_values(ws, start_col, csv_map, lte_rows)
+            start_col = next_pair_col(ws_max)
+            for ws in sheets.values():
+                setup_project_pair(ws, start_col, name, lte_rows)
             existing[name] = start_col
             added += 1
             action = "已追加"
         else:
-            missing = write_project_values(ws, start_col, csv_map, lte_rows)
+            for ws in sheets.values():
+                setup_project_pair(ws, start_col, name, lte_rows)
             updated += 1
             action = "已覆寫"
 
+        missing: list[int] = []
+        mid_empty: list[int] = []
+        for sheet_name, ws in sheets.items():
+            miss, mid_miss = write_project_values(
+                ws, start_col, csv_map, lte_rows, SHEET_STAT[sheet_name], cache
+            )
+            if sheet_name == SHEET_MAX:
+                missing = miss
+            if sheet_name == SHEET_MID:
+                mid_empty = mid_miss
+
+        if not freq_warned and SHEET_MID in sheets:
+            sample = next(iter(csv_map.values()), None)
+            if sample is not None:
+                df = cache.get(("df", sample))
+                if df is not None and find_freq_column(df) is None:
+                    print("警告：CSV 找不到頻率欄，LTE Mid AVG 全部留空")
+                    freq_warned = True
+
         miss_txt = f"，缺檔 Band：{', '.join(f'B{b}' for b in missing)}" if missing else ""
-        print(f"{action}：{name}（{len(csv_map)} 個 CSV）→ 欄 {get_column_letter(start_col)}{miss_txt}")
+        mid_txt = (
+            f"，Mid 視窗無資料：{', '.join(f'B{b}' for b in mid_empty)}"
+            if mid_empty and not freq_warned
+            else ""
+        )
+        print(
+            f"{action}：{name}（{len(csv_map)} 個 CSV）→ 欄 {get_column_letter(start_col)}"
+            f"{miss_txt}{mid_txt}"
+        )
 
     try:
         wb.save(WORKBOOK)
@@ -358,7 +530,9 @@ def process_projects(rebuild: bool = False) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="NPT CSV → data analysis.xlsx LTE")
+    parser = argparse.ArgumentParser(
+        description="NPT CSV → data analysis.xlsx LTE MAX / AVG / Mid AVG"
+    )
     parser.add_argument(
         "--rebuild",
         action="store_true",
